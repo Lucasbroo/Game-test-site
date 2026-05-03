@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>My .io Platformer Game</title>
+</head>
+<body style="margin:0; overflow:hidden;">
+<canvas id="game"></canvas>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+window.addEventListener("resize", () => {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+});
+
+// ================= INPUT =================
+let keys = {};
+document.addEventListener("keydown", e => keys[e.key.toLowerCase()] = true);
+document.addEventListener("keyup", e => keys[e.key.toLowerCase()] = false);
+
+// ================= IMAGES =================
+let Playerimage = new Image();
+Playerimage.src = "RED.png";
+
+let Worldblock = new Image();
+Worldblock.src = "BLACK.png";
+
+let log = new Image();
+log.src = "Log.jpg";
+
+let ladder = new Image();
+ladder.src = "BROWN.png";
+
+// ================= SETTINGS =================
+let enableWallCollision = true;
+
+const worldsize = { x: 400, y: 300 };
+const blocksize = 40;
+
+const worldWidth = worldsize.x * blocksize;
+const worldHeight = worldsize.y * blocksize;
+
+// ================= WORLD =================
+let Worldgrid = Array.from({ length: worldsize.y }, () =>
+    Array(worldsize.x).fill(0)
+);
+
+const TILE = {
+    EMPTY: 0,
+    GROUND: 1,
+    LOG: 2,
+    LADDER: 3
+};
+
+const tileData = {
+    [TILE.EMPTY]: { solid: false, ladder: false },
+    [TILE.GROUND]: { solid: true,  ladder: false },
+    [TILE.LOG]:    { solid: false,  ladder: false },
+    [TILE.LADDER]: { solid: false, ladder: true }
+};
+
+// ground
+for (let i = 0; i < worldsize.x; i++) {
+    Worldgrid[180][i] = TILE.GROUND;
+}
+
+// pillars
+for (let i = 170; i <= 179; i++) {
+    Worldgrid[i][150] = TILE.LOG;
+}
+for (let i = 170; i <= 179; i++) {
+    Worldgrid[i][130] = TILE.LADDER;
+}
+
+// ================= PLAYER =================
+let player = {
+    x: worldWidth / 2,
+    y: worldHeight / 2,
+    vx: 0,
+    vy: 0,
+    size: 20,
+    onGround: false,
+    onLadder: false
+};
+
+// ================= PHYSICS =================
+const gravity = 0.2;
+const jumpPower = -13;
+const acceleration = 0.2;
+const maxSpeed = 10;
+const friction = 0.9;
+
+// ================= HELPERS =================
+function createimage(img, x, y, w, h) {
+    ctx.drawImage(img, x - w / 2, y - h / 2, w, h);
+}
+
+function isColliding(px, py, bx, by) {
+    return (
+        px + player.size > bx &&
+        px - player.size < bx + blocksize &&
+        py + player.size > by &&
+        py - player.size < by + blocksize
+    );
+}
+
+// ================= VIEW CULLING =================
+function getVisibleRange(camX, camY) {
+    let startX = Math.floor(camX / blocksize) - 1;
+    let endX = Math.ceil((camX + canvas.width) / blocksize) + 1;
+
+    let startY = Math.floor(camY / blocksize) - 1;
+    let endY = Math.ceil((camY + canvas.height) / blocksize) + 1;
+
+    startX = Math.max(0, startX);
+    startY = Math.max(0, startY);
+    endX = Math.min(worldsize.x - 1, endX);
+    endY = Math.min(worldsize.y - 1, endY);
+
+    return { startX, endX, startY, endY };
+}
+
+// ================= GAME LOOP =================
+function gameLoop() {
+    requestAnimationFrame(gameLoop);
+
+    // ===== INPUT =====
+    if (keys["a"]) player.vx -= acceleration;
+    else if (keys["d"]) player.vx += acceleration;
+    else player.vx *= friction;
+
+    player.vx = Math.max(-maxSpeed, Math.min(maxSpeed, player.vx));
+
+    if (keys["w"] && (player.onGround || player.onLadder)) {
+        player.vy = jumpPower;
+        player.onGround = false;
+    }
+
+    // ===== GRAVITY =====
+    if (!player.onLadder){
+        player.vy += gravity;
+    }
+
+    // ===== CAMERA =====
+    let camX = player.x - canvas.width / 2;
+    let camY = player.y - canvas.height / 2;
+
+    camX = Math.max(0, Math.min(camX, worldWidth - canvas.width));
+    camY = Math.max(0, Math.min(camY, worldHeight - canvas.height));
+
+    let vis = getVisibleRange(camX, camY);
+
+    // ================= COLLISION (OPTIMIZED) =================
+    let minX = Math.floor((player.x - player.size) / blocksize);
+    let maxX = Math.floor((player.x + player.size) / blocksize);
+    let minY = Math.floor((player.y - player.size) / blocksize);
+    let maxY = Math.floor((player.y + player.size) / blocksize);
+
+    // ================= Y MOVEMENT =================
+    player.y += player.vy;
+    player.onGround = false;
+    player.onLadder = false;
+    for (let y = vis.startY; y <= vis.endY; y++) {
+        for (let x = vis.startX; x <= vis.endX; x++) {
+
+            let tile = Worldgrid[y][x];
+            let data = tileData[tile];
+
+            if (!data.solid && !data.ladder) continue;
+
+            let blockX = x * blocksize;
+            let blockY = y * blocksize;
+
+            if (!isColliding(player.x, player.y, blockX, blockY)) continue;
+
+            if (player.vy > 0 && !data.ladder) {
+                player.y = blockY - player.size;
+                player.vy = 0;
+                player.onGround = true;
+            } else if (player.vy < 0 && !data.ladder) {
+                player.y = blockY + blocksize + player.size;
+                player.vy = 0;
+            }
+            if (player.vy > 0 && data.ladder) {
+                player.y -= player.vy;
+                player.vy = 0;
+                player.onLadder = true;
+            }
+        }
+    }
+
+    // ================= X MOVEMENT =================
+    player.x += player.vx;
+
+    for (let y = vis.startY; y <= vis.endY; y++) {
+        for (let x = vis.startX; x <= vis.endX; x++) {
+
+            let tile = Worldgrid[y][x];
+            let data = tileData[tile];
+
+            if (!data?.solid) continue;
+
+            let blockX = x * blocksize;
+            let blockY = y * blocksize;
+
+            if (!isColliding(player.x, player.y, blockX, blockY)) continue;
+
+            if (enableWallCollision) {
+                if (player.vx > 0) {
+                    player.x = blockX - player.size;
+                    player.vx = 0;
+                } else if (player.vx < 0) {
+                    player.x = blockX + blocksize + player.size;
+                    player.vx = 0;
+                }
+            }
+        }
+    }
+
+    // ================= WORLD BOUNDARY COLLISION =================
+    if (player.x - player.size < 0) {
+        player.x = player.size;
+        player.vx = 0;
+    }
+
+    if (player.x + player.size > worldWidth) {
+        player.x = worldWidth - player.size;
+        player.vx = 0;
+    }
+
+    if (player.y - player.size < 0) {
+        player.y = player.size;
+        player.vy = 0;
+    }
+
+    if (player.y + player.size > worldHeight) {
+        player.y = worldHeight - player.size;
+        player.vy = 0;
+        player.onGround = true;
+    }
+
+    // ================= DRAW =================
+    ctx.fillStyle = "white";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    for (let y = vis.startY; y <= vis.endY; y++) {
+        for (let x = vis.startX; x <= vis.endX; x++) {
+            if (Worldgrid[y][x] === 0) continue;
+            if (Worldgrid[y][x] === 1) {
+                createimage(Worldblock,
+                    (x * blocksize) - camX + blocksize / 2,
+                    (y * blocksize) - camY + blocksize / 2,
+                    blocksize, blocksize);
+
+            } else if (Worldgrid[y][x] === 2) {
+                createimage(log,
+                    (x * blocksize) - camX + blocksize / 2,
+                    (y * blocksize) - camY + blocksize / 2,
+                    blocksize, blocksize);
+
+            } else if (Worldgrid[y][x] === 3) {
+                createimage(ladder,
+                    (x * blocksize) - camX + blocksize / 2,
+                    (y * blocksize) - camY + blocksize / 2,
+                    blocksize, blocksize);
+            }
+        }
+    }
+
+    // ================= PLAYER =================
+    createimage(
+        Playerimage,
+        player.x - camX,
+        player.y - camY,
+        40,
+        40
+    );
+}
+
+gameLoop();
+</script>
+</body>
+</html>
